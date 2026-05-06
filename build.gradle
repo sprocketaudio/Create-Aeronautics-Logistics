@@ -29,6 +29,46 @@ repositories {
     // Add here additional repositories if required by some of the dependencies below.
 }
 
+def localProperties = new Properties()
+def localPropertiesFile = rootProject.file('gradle-local.properties')
+if (localPropertiesFile.exists()) {
+    localPropertiesFile.withInputStream { stream ->
+        localProperties.load(stream)
+    }
+}
+
+def localAeronauticsJarPath = providers.gradleProperty('aeronautics_bundled_jar')
+        .orElse(providers.environmentVariable('AERONAUTICS_BUNDLED_JAR'))
+        .orElse(localProperties.getProperty('aeronautics_bundled_jar', ''))
+        .get()
+def localSableJarPath = providers.gradleProperty('sable_jar')
+        .orElse(providers.environmentVariable('SABLE_JAR'))
+        .orElse(localProperties.getProperty('sable_jar', ''))
+        .get()
+def localCreateJarPath = providers.gradleProperty('create_jar')
+        .orElse(providers.environmentVariable('CREATE_JAR'))
+        .orElse(localProperties.getProperty('create_jar', ''))
+        .get()
+def localPonderJarPath = providers.gradleProperty('ponder_jar')
+        .orElse(providers.environmentVariable('PONDER_JAR'))
+        .orElse(localProperties.getProperty('ponder_jar', ''))
+        .get()
+def localModJarPaths = [localAeronauticsJarPath, localSableJarPath].findAll { !it.isBlank() }
+
+tasks.register('extractLocalModJarJars', Copy) {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    localModJarPaths.each { jarPath ->
+        from(zipTree(jarPath)) {
+            include 'META-INF/jarjar/*.jar'
+            eachFile { details ->
+                details.path = details.name
+            }
+            includeEmptyDirs = false
+        }
+    }
+    into layout.buildDirectory.dir('local-mod-deps')
+}
+
 base {
     archivesName = mod_id
 }
@@ -104,6 +144,23 @@ dependencies {
     // For all intends and purposes: You can treat this dependency as if it is a normal library you would use.
     implementation "net.neoforged:neoforge:${neo_version}"
 
+    if (!localAeronauticsJarPath.isBlank()) {
+        localRuntime files(localAeronauticsJarPath)
+    }
+    if (!localSableJarPath.isBlank()) {
+        compileOnly files(localSableJarPath)
+        localRuntime files(localSableJarPath)
+    }
+    if (!localCreateJarPath.isBlank()) {
+        compileOnly files(localCreateJarPath)
+        localRuntime files(localCreateJarPath)
+    }
+    if (!localPonderJarPath.isBlank()) {
+        compileOnly files(localPonderJarPath)
+        localRuntime files(localPonderJarPath)
+    }
+    compileOnly fileTree(dir: layout.buildDirectory.dir('local-mod-deps'), include: '*.jar')
+
     // Example optional mod dependency with JEI
     // The JEI API is declared for compile time use, while the full JEI artifact is used at runtime
     // compileOnly "mezz.jei:jei-${mc_version}-common-api:${jei_version}"
@@ -141,6 +198,8 @@ tasks.withType(ProcessResources).configureEach {
             mod_name               : mod_name,
             mod_license            : mod_license,
             mod_version            : mod_version,
+            aeronautics_version_range: aeronautics_version_range,
+            sable_version_range    : sable_version_range,
     ]
     inputs.properties replaceProperties
 
@@ -165,6 +224,10 @@ publishing {
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
+}
+
+tasks.named('compileJava').configure {
+    dependsOn tasks.named('extractLocalModJarJars')
 }
 
 // IDEA no longer automatically downloads sources/javadoc jars for dependencies, so we need to explicitly enable the behavior.

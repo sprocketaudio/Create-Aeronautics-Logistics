@@ -1,6 +1,7 @@
 ### Gradle ###
 .gradle
 build/
+gradle-local.properties
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/**/build/
 
@@ -38,3 +39,7 @@ run/
 **/src/generated/**/.cache/
 repo/
 !**/src/**/repo/
+
+### Local Agent Planning ###
+SPEC.md
+AGENTS.md

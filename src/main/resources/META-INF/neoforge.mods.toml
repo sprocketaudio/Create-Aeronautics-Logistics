@@ -36,17 +36,17 @@ displayName="${mod_name}" #mandatory
 #displayURL="https://change.me.to.your.mods.homepage.example.invalid/" #optional
 
 # A file name (in the root of the mod JAR) containing a logo for display
-#logoFile="examplemod.png" #optional
+#logoFile="${mod_id}.png" #optional
 
 # A text field displayed in the mod UI
-#credits="" #optional
+credits="Built for Create Aeronautics logistics automation." #optional
 
 # The authors of the mod, displayed in the mod UI (optional)
 #authors=""
 
 # The description text for the mod (multi line!) (#mandatory)
 description='''
-Example mod description.
+Autonomous route recording and playback for Create Aeronautics vehicles.
 '''
 
 # The [[mixins]] block allows you to declare your mixin config to FML so that it gets loaded.
@@ -86,6 +86,22 @@ Example mod description.
     # This version range declares a minimum of the current minecraft version up to but not including the next major version
     versionRange="${minecraft_version_range}"
     ordering="NONE"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="aeronautics"
+    type="required"
+    reason="Automated Logistics targets Create Aeronautics airships for the MVP."
+    versionRange="${aeronautics_version_range}"
+    ordering="AFTER"
+    side="BOTH"
+
+[[dependencies.${mod_id}]]
+    modId="sable"
+    type="required"
+    reason="Automated Logistics resolves and controls assembled Aeronautics ships through Sable sublevels."
+    versionRange="${sable_version_range}"
+    ordering="AFTER"
     side="BOTH"
 
 # Features are specific properties of the game environment, that you may want to declare you require. This example declares
