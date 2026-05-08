@@ -6,7 +6,6 @@ import net.neoforged.neoforge.registries.DeferredItem;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import net.sprocketgames.create_aeronautics_automated_logistics.CreateAeronauticsAutomatedLogistics;
 import net.sprocketgames.create_aeronautics_automated_logistics.item.AirshipScheduleItem;
-import net.sprocketgames.create_aeronautics_automated_logistics.item.AutopilotSeatItem;
 
 public final class ModItems {
     public static final DeferredRegister.Items ITEMS = DeferredRegister.createItems(CreateAeronauticsAutomatedLogistics.MOD_ID);
@@ -15,11 +14,6 @@ public final class ModItems {
             "airship_station",
             ModBlocks.AIRSHIP_STATION,
             new Item.Properties()
-    );
-
-    public static final DeferredItem<BlockItem> AUTOPILOT_SEAT = ITEMS.register(
-            "autopilot_seat",
-            () -> new AutopilotSeatItem(ModBlocks.AUTOPILOT_SEAT.get(), new Item.Properties())
     );
 
     public static final DeferredItem<BlockItem> SHIP_TRANSPONDER = ITEMS.registerSimpleBlockItem(

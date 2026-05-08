@@ -14,6 +14,7 @@ import net.sprocketgames.create_aeronautics_automated_logistics.registry.ModBloc
 import net.sprocketgames.create_aeronautics_automated_logistics.registry.ModBlocks;
 import net.sprocketgames.create_aeronautics_automated_logistics.registry.ModItems;
 import net.sprocketgames.create_aeronautics_automated_logistics.registry.ModMenus;
+import net.sprocketgames.create_aeronautics_automated_logistics.service.AutomationVisualServerEvents;
 import net.sprocketgames.create_aeronautics_automated_logistics.service.RecordingServerEvents;
 import org.slf4j.Logger;
 
@@ -31,13 +32,13 @@ public class CreateAeronauticsAutomatedLogistics {
         ModBlockEntities.BLOCK_ENTITY_TYPES.register(modEventBus);
         modContainer.registerConfig(ModConfig.Type.COMMON, AutomatedLogisticsConfig.SPEC);
         NeoForge.EVENT_BUS.addListener(RecordingServerEvents::onServerTick);
+        NeoForge.EVENT_BUS.addListener(AutomationVisualServerEvents::onPlayerLogin);
         LOGGER.info("Create Aeronautics dependency state: {}", CreateAeronauticsCompat.describeLoadedState());
     }
 
     private void addCreativeTabContent(BuildCreativeModeTabContentsEvent event) {
         if (event.getTabKey() == CreativeModeTabs.FUNCTIONAL_BLOCKS) {
             event.accept(ModItems.AIRSHIP_STATION);
-            event.accept(ModItems.AUTOPILOT_SEAT);
             event.accept(ModItems.SHIP_TRANSPONDER);
             event.accept(ModItems.AIRSHIP_SCHEDULE);
         }

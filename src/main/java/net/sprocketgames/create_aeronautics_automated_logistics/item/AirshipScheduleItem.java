@@ -53,7 +53,11 @@ public class AirshipScheduleItem extends Item {
     }
 
     public static AirshipSchedule readSchedule(ItemStack stack) {
-        return readScheduleTag(stack).map(AirshipScheduleNbtSerializer::read).orElseGet(AirshipSchedule::empty);
+        try {
+            return readScheduleTag(stack).map(AirshipScheduleNbtSerializer::read).orElseGet(AirshipSchedule::empty);
+        } catch (Throwable ignored) {
+            return AirshipSchedule.empty();
+        }
     }
 
     public static void writeSchedule(ItemStack stack, AirshipSchedule schedule) {

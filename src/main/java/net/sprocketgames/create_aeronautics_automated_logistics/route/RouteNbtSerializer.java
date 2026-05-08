@@ -5,12 +5,15 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.sprocketgames.create_aeronautics_automated_logistics.vehicle.VehicleControllerRef;
@@ -116,6 +119,11 @@ public final class RouteNbtSerializer {
         tag.putInt("idleTicks", waitCondition.idleTicks());
         tag.putInt("maxTicks", waitCondition.maxTicks());
         tag.putBoolean("failOnTimeout", waitCondition.failOnTimeout());
+        tag.putInt("cargoOperator", waitCondition.cargoOperator());
+        tag.putInt("cargoMeasure", waitCondition.cargoMeasure());
+        if (!waitCondition.cargoFilter().isEmpty()) {
+            tag.putString("cargoFilter", BuiltInRegistries.ITEM.getKey(waitCondition.cargoFilter().getItem()).toString());
+        }
         return tag;
     }
 
@@ -128,8 +136,23 @@ public final class RouteNbtSerializer {
                 tag.getInt("durationTicks"),
                 tag.getInt("idleTicks"),
                 tag.getInt("maxTicks"),
-                tag.getBoolean("failOnTimeout")
+                tag.getBoolean("failOnTimeout"),
+                tag.contains("cargoOperator", Tag.TAG_ANY_NUMERIC) ? tag.getInt("cargoOperator") : 0,
+                tag.contains("cargoMeasure", Tag.TAG_ANY_NUMERIC) ? tag.getInt("cargoMeasure") : 0,
+                readCargoFilter(tag)
         );
+    }
+
+    private static ItemStack readCargoFilter(CompoundTag tag) {
+        if (!tag.contains("cargoFilter", Tag.TAG_STRING)) {
+            return ItemStack.EMPTY;
+        }
+        ResourceLocation id = ResourceLocation.tryParse(tag.getString("cargoFilter"));
+        if (id == null) {
+            return ItemStack.EMPTY;
+        }
+        Optional<Item> item = BuiltInRegistries.ITEM.getOptional(id);
+        return item.map(ItemStack::new).orElse(ItemStack.EMPTY);
     }
 
     private static ListTag writePoints(List<RoutePoint> points) {

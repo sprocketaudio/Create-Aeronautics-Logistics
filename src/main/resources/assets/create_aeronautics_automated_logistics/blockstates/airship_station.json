@@ -1,7 +1,10 @@
 {
   "variants": {
-    "": {
-      "model": "create_aeronautics_automated_logistics:block/airship_station"
+    "powered=false": {
+      "model": "create_aeronautics_automated_logistics:block/airship_station_off"
+    },
+    "powered=true": {
+      "model": "create_aeronautics_automated_logistics:block/airship_station_on"
     }
   }
 }

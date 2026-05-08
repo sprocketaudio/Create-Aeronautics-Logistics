@@ -8,7 +8,6 @@ import net.neoforged.neoforge.registries.DeferredBlock;
 import net.neoforged.neoforge.registries.DeferredRegister;
 import net.sprocketgames.create_aeronautics_automated_logistics.CreateAeronauticsAutomatedLogistics;
 import net.sprocketgames.create_aeronautics_automated_logistics.block.AirshipStationBlock;
-import net.sprocketgames.create_aeronautics_automated_logistics.block.AutopilotSeatBlock;
 import net.sprocketgames.create_aeronautics_automated_logistics.block.ShipTransponderBlock;
 
 public final class ModBlocks {
@@ -21,16 +20,6 @@ public final class ModBlocks {
                             .mapColor(MapColor.METAL)
                             .strength(3.5F)
                             .sound(SoundType.METAL)
-            )
-    );
-
-    public static final DeferredBlock<AutopilotSeatBlock> AUTOPILOT_SEAT = BLOCKS.register(
-            "autopilot_seat",
-            () -> new AutopilotSeatBlock(
-                    BlockBehaviour.Properties.of()
-                            .mapColor(MapColor.WOOD)
-                            .strength(1.5F)
-                            .sound(SoundType.WOOD)
             )
     );
 

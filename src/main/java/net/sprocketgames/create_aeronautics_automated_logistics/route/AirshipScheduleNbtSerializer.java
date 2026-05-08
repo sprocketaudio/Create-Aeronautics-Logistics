@@ -4,9 +4,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.Tag;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
 
 public final class AirshipScheduleNbtSerializer {
     private static final String DATA_VERSION = "dataVersion";
@@ -25,6 +29,9 @@ public final class AirshipScheduleNbtSerializer {
     private static final String CONDITION_TYPE = "conditionType";
     private static final String CONDITION_WAIT_TYPE = "conditionWaitType";
     private static final String CONDITION_WAIT_TICKS = "conditionWaitTicks";
+    private static final String CONDITION_CARGO_OPERATOR = "conditionCargoOperator";
+    private static final String CONDITION_CARGO_MEASURE = "conditionCargoMeasure";
+    private static final String CONDITION_CARGO_FILTER = "conditionCargoFilter";
     private static final int CURRENT_DATA_VERSION = 1;
 
     private AirshipScheduleNbtSerializer() {
@@ -62,7 +69,7 @@ public final class AirshipScheduleNbtSerializer {
         entry.targetStationId().ifPresent(id -> tag.putUUID(TARGET_STATION_ID, id));
         tag.putString(TARGET_STATION_NAME, entry.targetStationName());
         tag.putString(WAIT_TYPE, entry.waitCondition().type().name());
-        tag.putInt(WAIT_TICKS, entry.waitCondition().durationTicks());
+        tag.putInt(WAIT_TICKS, serializedWaitTicks(entry.waitCondition()));
         tag.putString(WAIT_UNIT, entry.waitUnit().name());
         entry.pinnedSegmentId().ifPresent(id -> tag.putUUID(PINNED_SEGMENT_ID, id.value()));
         tag.put(CONDITION_GROUPS, writeConditionGroups(entry.conditionGroups()));
@@ -84,9 +91,7 @@ public final class AirshipScheduleNbtSerializer {
             int waitTicks = tag.contains(WAIT_TICKS, Tag.TAG_ANY_NUMERIC)
                     ? Math.max(0, tag.getInt(WAIT_TICKS))
                     : WaitCondition.DEFAULT_TIMED_WAIT_TICKS;
-            WaitCondition waitCondition = waitType == WaitConditionType.NONE
-                    ? WaitCondition.none()
-                    : WaitCondition.timed(waitTicks);
+            WaitCondition waitCondition = readWaitCondition(waitType, waitTicks);
             WaitDurationUnit waitUnit = tag.contains(WAIT_UNIT, Tag.TAG_STRING)
                     ? WaitDurationUnit.valueOf(tag.getString(WAIT_UNIT))
                     : WaitDurationUnit.SECONDS;
@@ -119,7 +124,12 @@ public final class AirshipScheduleNbtSerializer {
                 CompoundTag conditionTag = new CompoundTag();
                 conditionTag.putString(CONDITION_TYPE, condition.type().name());
                 conditionTag.putString(CONDITION_WAIT_TYPE, condition.waitCondition().type().name());
-                conditionTag.putInt(CONDITION_WAIT_TICKS, condition.waitCondition().durationTicks());
+                conditionTag.putInt(CONDITION_WAIT_TICKS, serializedWaitTicks(condition.waitCondition()));
+                conditionTag.putInt(CONDITION_CARGO_OPERATOR, condition.waitCondition().cargoOperator());
+                conditionTag.putInt(CONDITION_CARGO_MEASURE, condition.waitCondition().cargoMeasure());
+                if (!condition.waitCondition().cargoFilter().isEmpty()) {
+                    conditionTag.putString(CONDITION_CARGO_FILTER, BuiltInRegistries.ITEM.getKey(condition.waitCondition().cargoFilter().getItem()).toString());
+                }
                 conditions.add(conditionTag);
             }
             groupTag.put(CONDITIONS, conditions);
@@ -159,12 +169,59 @@ public final class AirshipScheduleNbtSerializer {
             int waitTicks = tag.contains(CONDITION_WAIT_TICKS, Tag.TAG_ANY_NUMERIC)
                     ? Math.max(0, tag.getInt(CONDITION_WAIT_TICKS))
                     : WaitCondition.DEFAULT_TIMED_WAIT_TICKS;
-            WaitCondition waitCondition = waitType == WaitConditionType.NONE
-                    ? WaitCondition.none()
-                    : WaitCondition.timed(waitTicks);
+            int operator = tag.contains(CONDITION_CARGO_OPERATOR, Tag.TAG_ANY_NUMERIC) ? tag.getInt(CONDITION_CARGO_OPERATOR) : 0;
+            int measure = tag.contains(CONDITION_CARGO_MEASURE, Tag.TAG_ANY_NUMERIC) ? tag.getInt(CONDITION_CARGO_MEASURE) : 0;
+            ItemStack filter = readFilter(tag);
+            WaitCondition waitCondition = readWaitCondition(waitType, waitTicks, operator, measure, filter);
             return Optional.of(new AirshipScheduleCondition(type, waitCondition));
         } catch (RuntimeException ignored) {
             return Optional.empty();
         }
+    }
+
+    private static ItemStack readFilter(CompoundTag tag) {
+        if (!tag.contains(CONDITION_CARGO_FILTER, Tag.TAG_STRING)) {
+            return ItemStack.EMPTY;
+        }
+        ResourceLocation id = ResourceLocation.tryParse(tag.getString(CONDITION_CARGO_FILTER));
+        if (id == null) {
+            return ItemStack.EMPTY;
+        }
+        Optional<Item> item = BuiltInRegistries.ITEM.getOptional(id);
+        return item.map(ItemStack::new).orElse(ItemStack.EMPTY);
+    }
+
+    private static int serializedWaitTicks(WaitCondition waitCondition) {
+        return switch (waitCondition.type()) {
+            case UNTIL_DOCKED -> waitCondition.maxTicks();
+            case UNTIL_IDLE -> waitCondition.idleTicks();
+            default -> waitCondition.durationTicks();
+        };
+    }
+
+    private static WaitCondition readWaitCondition(WaitConditionType type, int ticks) {
+        return switch (type) {
+            case NONE -> WaitCondition.none();
+            case TIMED -> WaitCondition.timed(ticks);
+            case UNTIL_DOCKED -> WaitCondition.untilDocked(ticks);
+            case UNTIL_IDLE -> WaitCondition.untilIdle(ticks, 0);
+            case UNTIL_ITEM_THRESHOLD -> WaitCondition.itemThreshold(ticks, 0);
+            case UNTIL_FLUID_THRESHOLD -> WaitCondition.fluidThreshold(ticks, 0);
+            default -> new WaitCondition(type, ticks, 0, ticks, true, 0, 0, ItemStack.EMPTY);
+        };
+    }
+
+    private static WaitCondition readWaitCondition(
+            WaitConditionType type,
+            int ticks,
+            int operator,
+            int measure,
+            ItemStack filter
+    ) {
+        return switch (type) {
+            case UNTIL_ITEM_THRESHOLD -> WaitCondition.itemThreshold(ticks, 0, operator, measure, filter);
+            case UNTIL_FLUID_THRESHOLD -> WaitCondition.fluidThreshold(ticks, 0, operator, measure, filter);
+            default -> readWaitCondition(type, ticks);
+        };
     }
 }

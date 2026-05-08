@@ -1,17 +1,11 @@
 package net.sprocketgames.create_aeronautics_automated_logistics.vehicle;
 
 import java.util.Optional;
-import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.sprocketgames.create_aeronautics_automated_logistics.CreateAeronauticsAutomatedLogistics;
 
 public final class VehicleControllerResolver {
-    public static final ResourceLocation LINKED_AUTOPILOT_SEAT = ResourceLocation.fromNamespaceAndPath(
-            CreateAeronauticsAutomatedLogistics.MOD_ID,
-            "autopilot_seat"
-    );
-
     private VehicleControllerResolver() {
     }
 
@@ -23,8 +17,7 @@ public final class VehicleControllerResolver {
                     .map(VehicleController.class::cast);
         }
 
-        if (controllerRef.controllerType().equals(SableSubLevelVehicleController.TYPE)
-                || controllerRef.controllerType().equals(LINKED_AUTOPILOT_SEAT)) {
+        if (controllerRef.controllerType().equals(SableSubLevelVehicleController.TYPE)) {
             try {
                 return SableSubLevelVehicleController.resolve(level, controllerRef).map(VehicleController.class::cast);
             } catch (RuntimeException exception) {
@@ -46,8 +39,7 @@ public final class VehicleControllerResolver {
             return resolved;
         }
 
-        if (controllerRef.controllerType().equals(SableSubLevelVehicleController.TYPE)
-                || controllerRef.controllerType().equals(LINKED_AUTOPILOT_SEAT)) {
+        if (controllerRef.controllerType().equals(SableSubLevelVehicleController.TYPE)) {
             try {
                 return SableSubLevelVehicleController.resolveTrackedPlayer(player).map(VehicleController.class::cast);
             } catch (RuntimeException exception) {

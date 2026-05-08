@@ -180,7 +180,6 @@ public class RiddenEntityRouteRecordingService implements RouteRecordingService 
             return RouteOperationResult.failure(RecordingFailure.ROUTE_TOO_SHORT);
         }
 
-        activeRecordings.remove(recording.session().routeId());
         Optional<ShipTransponderSnapshot> ship = ShipTransponderRegistry.snapshot(selectedTransponderId.get());
         String shipName = ship.map(ShipTransponderSnapshot::shipName).orElseGet(startStation.get()::selectedShipName);
         Optional<UUID> runtimeShipId = ship.flatMap(ShipTransponderSnapshot::runtimeShipId)
@@ -219,7 +218,39 @@ public class RiddenEntityRouteRecordingService implements RouteRecordingService 
         if (!startStation.get().stationId().equals(endStation.get().stationId())) {
             endStation.get().addRouteSegment(segment);
         }
+        continueRecordingFromStation(player, level, recording, endStation.get(), ship);
         return RouteOperationResult.success(segment);
+    }
+
+    private void continueRecordingFromStation(
+            ServerPlayer player,
+            ServerLevel level,
+            ActiveRecording previousRecording,
+            AirshipStationBlockEntity nextStartStation,
+            Optional<ShipTransponderSnapshot> ship
+    ) {
+        activeRecordings.remove(previousRecording.session().routeId());
+        RecordingSession nextSession = new RecordingSession(
+                RouteId.create(),
+                previousRecording.session().playerId(),
+                nextStartStation.getBlockPos().immutable(),
+                previousRecording.session().controllerRef(),
+                level.getGameTime()
+        );
+        ActiveRecording nextRecording = new ActiveRecording(nextSession, previousRecording.dimension(), previousRecording.controller());
+        activeRecordings.put(nextSession.routeId(), nextRecording);
+        ship.ifPresent(nextStartStation::selectShip);
+        nextStartStation.startRecording(nextSession);
+        sample(
+                level,
+                nextStartStation,
+                nextRecording,
+                previousRecording.controller().recordingPosition(player),
+                previousRecording.controller().yaw(),
+                previousRecording.controller().routeRotation(),
+                level.getGameTime(),
+                true
+        );
     }
 
     @Override
@@ -339,6 +370,18 @@ public class RiddenEntityRouteRecordingService implements RouteRecordingService 
             return RouteOperationResult.failure(RecordingFailure.ROUTE_TOO_SHORT);
         }
         return RouteOperationResult.success(activeRecording.get().stops().getLast());
+    }
+
+    @Override
+    public boolean hasActiveRecording(ServerPlayer player) {
+        Objects.requireNonNull(player, "player");
+        return activeRecordingFor(player.getUUID()).isPresent();
+    }
+
+    @Override
+    public Optional<RecordingSession> activeRecordingForPlayer(UUID playerId) {
+        Objects.requireNonNull(playerId, "playerId");
+        return activeRecordingFor(playerId).map(ActiveRecording::session);
     }
 
     @Override

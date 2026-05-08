@@ -19,6 +19,12 @@ public class AutomatedLogisticsConfig {
     public static final ModConfigSpec.BooleanValue SHOW_ROUTE_PREVIEW;
     public static final ModConfigSpec.IntValue PREVIEW_RANGE;
 
+    public static final ModConfigSpec.IntValue STATION_DOCK_SEARCH_RADIUS;
+    public static final ModConfigSpec.IntValue SHIP_DOCK_SEARCH_RADIUS;
+    public static final ModConfigSpec.IntValue DOCK_LOCK_TIMEOUT_TICKS;
+    public static final ModConfigSpec.IntValue DOCK_IDLE_TIMEOUT_TICKS;
+    public static final ModConfigSpec.IntValue DOCK_CARGO_TIMEOUT_TICKS;
+
     public static final ModConfigSpec.IntValue MAX_ACTIVE_VEHICLES_PER_PLAYER;
 
     static final ModConfigSpec SPEC;
@@ -61,6 +67,24 @@ public class AutomatedLogisticsConfig {
         PREVIEW_RANGE = BUILDER
                 .comment("Maximum route preview range in blocks.")
                 .defineInRange("previewRange", 128, 0, 1024);
+        BUILDER.pop();
+
+        BUILDER.push("docking");
+        STATION_DOCK_SEARCH_RADIUS = BUILDER
+                .comment("Search radius in blocks for finding exactly one ground-side Docking Connector near an Airship Station.")
+                .defineInRange("stationDockSearchRadius", 24, 1, 128);
+        SHIP_DOCK_SEARCH_RADIUS = BUILDER
+                .comment("Search radius in blocks for finding exactly one ship-side Docking Connector near a Ship Transponder on an assembled ship.")
+                .defineInRange("shipDockSearchRadius", 24, 1, 128);
+        DOCK_LOCK_TIMEOUT_TICKS = BUILDER
+                .comment("Maximum ticks to wait for station and ship Docking Connectors to lock after a docking stop starts.")
+                .defineInRange("dockLockTimeoutTicks", 20 * 30, 20, 20 * 60 * 10);
+        DOCK_IDLE_TIMEOUT_TICKS = BUILDER
+                .comment("Maximum ticks to wait for dock transfer activity to become idle before continuing.")
+                .defineInRange("dockIdleTimeoutTicks", 20 * 120, 20, 20 * 60 * 30);
+        DOCK_CARGO_TIMEOUT_TICKS = BUILDER
+                .comment("Maximum ticks to wait for dock-visible cargo threshold conditions before failing playback.")
+                .defineInRange("dockCargoTimeoutTicks", 20 * 120, 20, 20 * 60 * 30);
         BUILDER.pop();
 
         BUILDER.push("limits");

@@ -1,23 +1,34 @@
 package net.sprocketgames.create_aeronautics_automated_logistics.service;
 
+import com.simibubi.create.content.trains.schedule.condition.CargoThresholdCondition.Ops;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.phys.Vec3;
+import net.neoforged.neoforge.network.PacketDistributor;
 import net.sprocketgames.create_aeronautics_automated_logistics.CreateAeronauticsAutomatedLogistics;
 import net.sprocketgames.create_aeronautics_automated_logistics.AutomatedLogisticsConfig;
+import net.sprocketgames.create_aeronautics_automated_logistics.network.SetAutomatedShipVisualStatePayload;
 import net.sprocketgames.create_aeronautics_automated_logistics.block.entity.AirshipStationBlockEntity;
+import net.sprocketgames.create_aeronautics_automated_logistics.dock.DockTransferSnapshot;
+import net.sprocketgames.create_aeronautics_automated_logistics.dock.DockingRuntime;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.FailureReason;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.Route;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.RouteId;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.RoutePoint;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.RouteRotation;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.RouteStop;
+import net.sprocketgames.create_aeronautics_automated_logistics.route.WaitCondition;
+import net.sprocketgames.create_aeronautics_automated_logistics.route.WaitConditionType;
 import net.sprocketgames.create_aeronautics_automated_logistics.vehicle.VehicleController;
 import net.sprocketgames.create_aeronautics_automated_logistics.vehicle.VehicleControllerResolver;
 import net.sprocketgames.create_aeronautics_automated_logistics.vehicle.VehicleMotionResult;
@@ -37,6 +48,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
     private static final double STATIONARY_SEGMENT_DISTANCE = 0.1D;
 
     private final Map<RouteId, ActivePlayback> activePlaybacks = new HashMap<>();
+    private final Set<UUID> activeVisualShipIds = new HashSet<>();
 
     @Override
     public PlaybackOperationResult<RouteId> startPlayback(ServerLevel level, BlockPos stationPos, Route route) {
@@ -75,6 +87,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
         ActivePlayback activePlayback = ActivePlayback.create(route, stationPos, controller.get());
         activePlaybacks.put(route.id(), activePlayback);
         station.get().startPlayback(route);
+        setVisualsActive(level, activePlayback, true);
         return PlaybackOperationResult.success(route.id());
     }
 
@@ -89,8 +102,10 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return;
         }
 
+        setVisualsActive(level, activePlayback, false);
         activePlayback.controller().stop(level);
         stationAt(level, activePlayback.stationPos()).ifPresent(station -> {
+            clearDockOutputs(level, station, activePlayback);
             if (reason == FailureReason.NONE) {
                 station.stopPlayback();
             } else {
@@ -128,6 +143,10 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
         return activePlaybacks.containsKey(routeId);
     }
 
+    public Set<UUID> activeVisualShipIds() {
+        return Set.copyOf(activeVisualShipIds);
+    }
+
     private PlaybackFailure tickOne(ServerLevel level, ActivePlayback activePlayback) {
         Optional<AirshipStationBlockEntity> station = stationAt(level, activePlayback.stationPos());
         if (station.isEmpty()) {
@@ -141,6 +160,10 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
         if (!controller.isAssembled()) {
             return PlaybackFailure.VEHICLE_MISSING;
         }
+        if (activePlayback.isWaiting()) {
+            return tickWaiting(level, station.get(), activePlayback, controller);
+        }
+
         if (AutomatedLogisticsConfig.STOP_ON_COLLISION.get()
                 && controller.collisionEntity()
                 .map(entity -> entity.horizontalCollision || (entity.verticalCollision && !entity.verticalCollisionBelow))
@@ -148,13 +171,11 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return PlaybackFailure.COLLISION_OR_OBSTRUCTION;
         }
 
-        if (activePlayback.isWaiting()) {
-            return tickWaiting(level, station.get(), activePlayback, controller);
-        }
-
         RoutePoint target = activePlayback.targetPoint();
         Vec3 targetPosition = activePlayback.targetPosition();
-        Optional<RouteRotation> targetRotation = activePlayback.targetRotation(controller.position());
+        Vec3 guidancePosition = activePlayback.guidancePosition();
+        Optional<RouteRotation> targetRotation = activePlayback.targetRotation();
+        Optional<RouteRotation> guidanceRotation = activePlayback.guidanceRotation();
         double distanceToTarget = controller.position().distanceTo(targetPosition);
         double arrivalDistance = activePlayback.arrivalDistance();
         boolean rotationAligned = activePlayback.isRotationAligned(targetRotation, controller);
@@ -180,15 +201,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
                     targetPosition
             );
             if (activePlayback.beginWaitAtCurrentTarget()) {
-                station.get().waitPlayback(activePlayback.route());
-                CreateAeronauticsAutomatedLogistics.LOGGER.info(
-                        "Playback {} waiting at stop {} for {} ticks",
-                        activePlayback.route().id().value(),
-                        activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
-                        activePlayback.waitTicksRemaining()
-                );
-                activePlayback.resetProgress(distanceToTarget);
-                return holdAtTarget(level, activePlayback, controller, targetPosition, activePlayback.pointRotation(activePlayback.targetIndex()));
+                return beginWaitAtTarget(level, station.get(), activePlayback, controller, targetPosition, distanceToTarget);
             }
             if (activePlayback.isComplete()) {
                 complete(level, activePlayback);
@@ -197,7 +210,9 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             activePlayback.advanceTarget();
             target = activePlayback.targetPoint();
             targetPosition = activePlayback.targetPosition();
-            targetRotation = activePlayback.targetRotation(controller.position());
+            guidancePosition = activePlayback.guidancePosition();
+            targetRotation = activePlayback.targetRotation();
+            guidanceRotation = activePlayback.guidanceRotation();
             distanceToTarget = controller.position().distanceTo(targetPosition);
             arrivalDistance = activePlayback.arrivalDistance();
             activePlayback.resetProgress(distanceToTarget);
@@ -213,15 +228,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
                         targetPosition
                 );
                 if (activePlayback.beginWaitAtCurrentTarget()) {
-                    station.get().waitPlayback(activePlayback.route());
-                    CreateAeronauticsAutomatedLogistics.LOGGER.info(
-                            "Playback {} waiting at stop {} for {} ticks",
-                            activePlayback.route().id().value(),
-                            activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
-                            activePlayback.waitTicksRemaining()
-                    );
-                    activePlayback.resetProgress(distanceToTarget);
-                    return holdAtTarget(level, activePlayback, controller, targetPosition, activePlayback.pointRotation(activePlayback.targetIndex()));
+                    return beginWaitAtTarget(level, station.get(), activePlayback, controller, targetPosition, distanceToTarget);
                 }
                 if (activePlayback.isComplete()) {
                     complete(level, activePlayback);
@@ -230,7 +237,9 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
                 activePlayback.advanceTarget();
                 target = activePlayback.targetPoint();
                 targetPosition = activePlayback.targetPosition();
-                targetRotation = activePlayback.targetRotation(controller.position());
+                guidancePosition = activePlayback.guidancePosition();
+                targetRotation = activePlayback.targetRotation();
+                guidanceRotation = activePlayback.guidanceRotation();
                 distanceToTarget = controller.position().distanceTo(targetPosition);
                 arrivalDistance = activePlayback.arrivalDistance();
                 activePlayback.resetProgress(distanceToTarget);
@@ -250,7 +259,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             }
         }
 
-        Vec3 collisionTargetPosition = targetPosition;
+        Vec3 collisionTargetPosition = guidancePosition;
         if (AutomatedLogisticsConfig.STOP_ON_COLLISION.get()
                 && controller.collisionEntity().map(entity -> willCollide(level, entity, collisionTargetPosition)).orElse(false)) {
             return PlaybackFailure.COLLISION_OR_OBSTRUCTION;
@@ -272,8 +281,8 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
 
         VehicleMotionResult motionResult = controller.moveToward(
                 level,
-                targetPosition,
-                targetRotation,
+                guidancePosition,
+                guidanceRotation,
                 AutomatedLogisticsConfig.MAX_SPEED_MULTIPLIER.get(),
                 targetSpeed
         );
@@ -291,9 +300,92 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
     ) {
         Vec3 targetPosition = activePlayback.targetPosition();
         Optional<RouteRotation> targetRotation = activePlayback.pointRotation(activePlayback.targetIndex());
+
+        if (activePlayback.isDockingWait()) {
+            Optional<AirshipStationBlockEntity> dockingStation = dockingStation(level, station, activePlayback);
+            if (dockingStation.isEmpty()) {
+                return PlaybackFailure.STATION_MISSING;
+            }
+            DockingRuntime.DockingWaitResult docking = DockingRuntime.tickDockingWait(level, dockingStation.get(), activePlayback.route());
+            if (docking.failure().isPresent()) {
+                return docking.failure().get();
+            }
+            if (docking.locked() && !activePlayback.dockLocked()) {
+                activePlayback.dockLocked(true);
+                if (activePlayback.isIdleWait()) {
+                    DockingRuntime.transferSnapshot(level, dockingStation.get(), activePlayback.route())
+                            .ifPresent(activePlayback::dockTransferSnapshot);
+                    CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                            "Playback {} docked at stop {} and will wait for {} idle ticks",
+                            activePlayback.route().id().value(),
+                            activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
+                            activePlayback.waitTicksRemaining()
+                    );
+                } else if (activePlayback.isCargoThresholdWait()) {
+                    CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                            "Playback {} docked at stop {} and will wait for cargo threshold {}",
+                            activePlayback.route().id().value(),
+                            activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
+                            activePlayback.waitingStop()
+                                    .map(RouteStop::waitCondition)
+                                    .map(WaitCondition::durationTicks)
+                                    .orElse(0)
+                    );
+                } else {
+                    CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                            "Playback {} docked at stop {} and will hold for {} ticks",
+                            activePlayback.route().id().value(),
+                            activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
+                            activePlayback.waitTicksRemaining()
+                    );
+                }
+                if (activePlayback.waitTicksRemaining() <= 0) {
+                    return finishWaiting(level, station, activePlayback, controller);
+                }
+            } else if (!activePlayback.dockLocked() && activePlayback.tickDockTimeout()) {
+                return PlaybackFailure.DOCK_LOCK_FAILED;
+            }
+        }
+
         PlaybackFailure failure = holdAtTarget(level, activePlayback, controller, targetPosition, targetRotation);
         if (failure != null) {
             return failure;
+        }
+
+        if (activePlayback.isDockingWait() && !activePlayback.dockLocked()) {
+            return null;
+        }
+
+        if (activePlayback.isIdleWait()) {
+            Optional<AirshipStationBlockEntity> dockingStation = dockingStation(level, station, activePlayback);
+            if (dockingStation.isEmpty()) {
+                return PlaybackFailure.STATION_MISSING;
+            }
+            if (tickDockIdleWait(level, dockingStation.get(), activePlayback)) {
+                CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                        "Playback {} finished dock idle wait at stop {}",
+                        activePlayback.route().id().value(),
+                        activePlayback.waitingStop().map(RouteStop::name).orElse("unknown")
+                );
+                return finishWaiting(level, station, activePlayback, controller);
+            }
+            return null;
+        }
+
+        if (activePlayback.isCargoThresholdWait()) {
+            Optional<AirshipStationBlockEntity> dockingStation = dockingStation(level, station, activePlayback);
+            if (dockingStation.isEmpty()) {
+                return PlaybackFailure.STATION_MISSING;
+            }
+            if (tickDockCargoThresholdWait(level, dockingStation.get(), activePlayback)) {
+                CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                        "Playback {} finished dock cargo threshold wait at stop {}",
+                        activePlayback.route().id().value(),
+                        activePlayback.waitingStop().map(RouteStop::name).orElse("unknown")
+                );
+                return finishWaiting(level, station, activePlayback, controller);
+            }
+            return null;
         }
 
         if (activePlayback.tickWait()) {
@@ -302,15 +394,129 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
                     activePlayback.route().id().value(),
                     activePlayback.waitingStop().map(RouteStop::name).orElse("unknown")
             );
-            activePlayback.clearWait();
-            if (activePlayback.isComplete()) {
-                complete(level, activePlayback);
-                return null;
-            }
-            station.resumePlayback();
-            activePlayback.advanceTarget();
-            activePlayback.resetProgress(controller.position().distanceTo(activePlayback.targetPosition()));
+            return finishWaiting(level, station, activePlayback, controller);
         }
+        return null;
+    }
+
+    private boolean tickDockIdleWait(
+            ServerLevel level,
+            AirshipStationBlockEntity station,
+            ActivePlayback activePlayback
+    ) {
+        Optional<DockTransferSnapshot> snapshot = DockingRuntime.transferSnapshot(level, station, activePlayback.route());
+        if (snapshot.isEmpty()) {
+            CreateAeronauticsAutomatedLogistics.LOGGER.warn(
+                    "Playback {} could not read locked dock transfer state at stop {}; falling back to timed idle window",
+                    activePlayback.route().id().value(),
+                    activePlayback.waitingStop().map(RouteStop::name).orElse("unknown")
+            );
+            return activePlayback.tickWait();
+        }
+
+        if (activePlayback.dockTransferSnapshot().isEmpty()) {
+            activePlayback.dockTransferSnapshot(snapshot.get());
+            return activePlayback.tickWait();
+        }
+
+        if (!snapshot.get().equals(activePlayback.dockTransferSnapshot().get())) {
+            activePlayback.dockTransferSnapshot(snapshot.get());
+            activePlayback.resetIdleWait();
+            return false;
+        }
+
+        if (activePlayback.tickIdleTimeout()) {
+            CreateAeronauticsAutomatedLogistics.LOGGER.warn(
+                    "Playback {} dock idle wait reached max timeout at stop {}; continuing",
+                    activePlayback.route().id().value(),
+                    activePlayback.waitingStop().map(RouteStop::name).orElse("unknown")
+            );
+            return true;
+        }
+        return activePlayback.tickWait();
+    }
+
+    private boolean tickDockCargoThresholdWait(
+            ServerLevel level,
+            AirshipStationBlockEntity station,
+            ActivePlayback activePlayback
+    ) {
+        Optional<DockTransferSnapshot> snapshot = DockingRuntime.transferSnapshot(level, station, activePlayback.route());
+        if (snapshot.isEmpty()) {
+            return false;
+        }
+
+        WaitCondition waitCondition = activePlayback.waitingStop()
+                .map(RouteStop::waitCondition)
+                .orElse(WaitCondition.none());
+        Ops[] ops = Ops.values();
+        Ops operator = ops[Math.max(0, Math.min(ops.length - 1, waitCondition.cargoOperator()))];
+        int currentAmount = switch (waitCondition.type()) {
+            case UNTIL_ITEM_THRESHOLD -> snapshot.get().itemAmount(
+                    level,
+                    waitCondition.cargoFilter(),
+                    waitCondition.cargoMeasure() == 1
+            );
+            case UNTIL_FLUID_THRESHOLD -> snapshot.get().fluidBuckets(level, waitCondition.cargoFilter());
+            default -> 0;
+        };
+        if (operator.test(currentAmount, waitCondition.durationTicks())) {
+            return true;
+        }
+        if (activePlayback.tickCargoTimeout()) {
+            fail(level, activePlayback, PlaybackFailure.CARGO_CONDITION_TIMEOUT);
+        }
+        return false;
+    }
+
+    private PlaybackFailure beginWaitAtTarget(
+            ServerLevel level,
+            AirshipStationBlockEntity station,
+            ActivePlayback activePlayback,
+            VehicleController controller,
+            Vec3 targetPosition,
+            double distanceToTarget
+    ) {
+        station.waitPlayback(activePlayback.route());
+        CreateAeronauticsAutomatedLogistics.LOGGER.info(
+                "Playback {} waiting at stop {} for {} ticks",
+                activePlayback.route().id().value(),
+                activePlayback.waitingStop().map(RouteStop::name).orElse("unknown"),
+                activePlayback.waitTicksRemaining()
+        );
+        if (activePlayback.isDockingWait()) {
+            Optional<AirshipStationBlockEntity> dockingStation = dockingStation(level, station, activePlayback);
+            if (dockingStation.isEmpty()) {
+                return PlaybackFailure.STATION_MISSING;
+            }
+            activePlayback.activeDockStationPos(Optional.of(dockingStation.get().getBlockPos().immutable()));
+            Optional<PlaybackFailure> dockFailure = DockingRuntime.beginDockingWait(level, dockingStation.get(), activePlayback.route());
+            if (dockFailure.isPresent()) {
+                return dockFailure.get();
+            }
+        }
+        activePlayback.resetProgress(distanceToTarget);
+        return holdAtTarget(level, activePlayback, controller, targetPosition, activePlayback.pointRotation(activePlayback.targetIndex()));
+    }
+
+    private PlaybackFailure finishWaiting(
+            ServerLevel level,
+            AirshipStationBlockEntity station,
+            ActivePlayback activePlayback,
+            VehicleController controller
+    ) {
+        boolean dockingWait = activePlayback.isDockingWait();
+        activePlayback.clearWait();
+        if (dockingWait) {
+            clearDockOutputs(level, station, activePlayback);
+        }
+        if (activePlayback.isComplete()) {
+            complete(level, activePlayback);
+            return null;
+        }
+        station.resumePlayback();
+        activePlayback.advanceTarget();
+        activePlayback.resetProgress(controller.position().distanceTo(activePlayback.targetPosition()));
         return null;
     }
 
@@ -355,19 +561,58 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             case MISSING_AUTOPILOT_CONTROLLER -> PlaybackFailure.MISSING_CONTROLLER;
             case MISSING_STATION -> PlaybackFailure.STATION_MISSING;
             case INVALID_ROUTE_DATA, DIMENSION_MISMATCH -> PlaybackFailure.INVALID_ROUTE;
+            case MISSING_DOCK -> PlaybackFailure.MISSING_DOCK;
+            case AMBIGUOUS_DOCK -> PlaybackFailure.AMBIGUOUS_DOCK;
+            case DOCK_LOCK_FAILED -> PlaybackFailure.DOCK_LOCK_FAILED;
+            case CARGO_CONDITION_TIMEOUT -> PlaybackFailure.CARGO_CONDITION_TIMEOUT;
             case MOVEMENT_FAILURE, NONE -> PlaybackFailure.MOVEMENT_FAILURE;
         };
     }
 
     private void fail(ServerLevel level, ActivePlayback activePlayback, PlaybackFailure failure) {
+        setVisualsActive(level, activePlayback, false);
         activePlayback.controller().stop(level);
-        stationAt(level, activePlayback.stationPos()).ifPresent(station -> station.failPlayback(failure.failureReason()));
+        stationAt(level, activePlayback.stationPos()).ifPresent(station -> {
+            clearDockOutputs(level, station, activePlayback);
+            station.failPlayback(failure.failureReason());
+        });
     }
 
     private void complete(ServerLevel level, ActivePlayback activePlayback) {
+        setVisualsActive(level, activePlayback, false);
         activePlayback.controller().stop(level);
         activePlayback.completed(true);
-        stationAt(level, activePlayback.stationPos()).ifPresent(AirshipStationBlockEntity::stopPlayback);
+        stationAt(level, activePlayback.stationPos()).ifPresent(station -> {
+            clearDockOutputs(level, station, activePlayback);
+            station.stopPlayback();
+        });
+    }
+
+    private Optional<AirshipStationBlockEntity> dockingStation(
+            ServerLevel level,
+            AirshipStationBlockEntity fallbackStation,
+            ActivePlayback activePlayback
+    ) {
+        return activePlayback.waitingStop()
+                .flatMap(RouteStop::dockPos)
+                .flatMap(dockStationPos -> stationAt(level, dockStationPos))
+                .or(() -> Optional.of(fallbackStation));
+    }
+
+    private void clearDockOutputs(
+            ServerLevel level,
+            AirshipStationBlockEntity fallbackStation,
+            ActivePlayback activePlayback
+    ) {
+        Optional<BlockPos> dockingStationPos = activePlayback.activeDockStationPos()
+                .or(() -> activePlayback.waitingStop().flatMap(RouteStop::dockPos));
+        dockingStationPos
+                .flatMap(dockStationPos -> stationAt(level, dockStationPos))
+                .ifPresent(dockingStation -> DockingRuntime.clearDockOutputs(level, dockingStation, activePlayback.route()));
+        if (dockingStationPos.isPresent() && !dockingStationPos.get().equals(fallbackStation.getBlockPos())) {
+            DockingRuntime.clearDockOutputs(level, fallbackStation, activePlayback.route());
+        }
+        activePlayback.activeDockStationPos(Optional.empty());
     }
 
     private Optional<AirshipStationBlockEntity> stationAt(ServerLevel level, BlockPos stationPos) {
@@ -375,6 +620,23 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return Optional.of(station);
         }
         return Optional.empty();
+    }
+
+    private void setVisualsActive(ServerLevel level, ActivePlayback activePlayback, boolean active) {
+        activePlayback.route().linkedController().vehicleId().ifPresent(shipId -> {
+            if (active) {
+                if (!activeVisualShipIds.add(shipId)) {
+                    return;
+                }
+            } else if (!activeVisualShipIds.remove(shipId)) {
+                return;
+            }
+
+            SetAutomatedShipVisualStatePayload payload = new SetAutomatedShipVisualStatePayload(shipId, active);
+            for (ServerPlayer player : level.getServer().getPlayerList().getPlayers()) {
+                PacketDistributor.sendToPlayer(player, payload);
+            }
+        });
     }
 
     private static final class ActivePlayback {
@@ -393,7 +655,14 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
         private int initialJoinSegmentsAdvanced;
         private int endpointSettleTicks;
         private Optional<RouteStop> waitingStop = Optional.empty();
+        private Optional<BlockPos> activeDockStationPos = Optional.empty();
         private int waitTicksRemaining;
+        private int idleWindowTicks;
+        private int dockTimeoutTicksRemaining;
+        private int dockIdleTimeoutTicksRemaining;
+        private int dockCargoTimeoutTicksRemaining;
+        private boolean dockLocked;
+        private Optional<DockTransferSnapshot> dockTransferSnapshot = Optional.empty();
         private boolean completed;
 
         private ActivePlayback(
@@ -508,13 +777,36 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
                 return false;
             }
 
-            int runtimeTicks = stop.get().waitCondition().runtimeTicks();
-            if (!stop.get().waitCondition().waits() || runtimeTicks <= 0) {
+            RouteStop routeStop = stop.get();
+            if (!routeStop.waitCondition().waits()) {
                 return false;
             }
 
             waitingStop = stop;
-            waitTicksRemaining = runtimeTicks;
+            waitTicksRemaining = Math.max(0, routeStop.waitCondition().runtimeTicks());
+            if (routeStop.waitCondition().type() == WaitConditionType.UNTIL_IDLE && waitTicksRemaining <= 0) {
+                waitTicksRemaining = WaitCondition.DEFAULT_TIMED_WAIT_TICKS;
+            }
+            idleWindowTicks = waitTicksRemaining;
+            dockTimeoutTicksRemaining = isDockingWait()
+                    ? AutomatedLogisticsConfig.DOCK_LOCK_TIMEOUT_TICKS.get()
+                    : 0;
+            dockIdleTimeoutTicksRemaining = routeStop.waitCondition().type() == WaitConditionType.UNTIL_IDLE
+                    ? (routeStop.waitCondition().maxTicks() > 0
+                    ? routeStop.waitCondition().maxTicks()
+                    : AutomatedLogisticsConfig.DOCK_IDLE_TIMEOUT_TICKS.get())
+                    : 0;
+            dockCargoTimeoutTicksRemaining = isCargoThresholdWait()
+                    ? (routeStop.waitCondition().maxTicks() > 0
+                    ? routeStop.waitCondition().maxTicks()
+                    : AutomatedLogisticsConfig.DOCK_CARGO_TIMEOUT_TICKS.get())
+                    : 0;
+            dockLocked = false;
+            dockTransferSnapshot = Optional.empty();
+            if (!isDockingWait() && waitTicksRemaining <= 0) {
+                waitingStop = Optional.empty();
+                return false;
+            }
             return true;
         }
 
@@ -541,8 +833,61 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return waitingStop;
         }
 
+        private Optional<BlockPos> activeDockStationPos() {
+            return activeDockStationPos;
+        }
+
+        private void activeDockStationPos(Optional<BlockPos> activeDockStationPos) {
+            this.activeDockStationPos = activeDockStationPos;
+        }
+
+        private boolean isDockingWait() {
+            return waitingStop
+                    .map(RouteStop::waitCondition)
+                    .map(wait -> wait.type() == WaitConditionType.UNTIL_DOCKED
+                            || wait.type() == WaitConditionType.UNTIL_IDLE
+                            || wait.type() == WaitConditionType.UNTIL_ITEM_THRESHOLD
+                            || wait.type() == WaitConditionType.UNTIL_FLUID_THRESHOLD)
+                    .orElse(false);
+        }
+
+        private boolean isIdleWait() {
+            return waitingStop
+                    .map(RouteStop::waitCondition)
+                    .map(wait -> wait.type() == WaitConditionType.UNTIL_IDLE)
+                    .orElse(false);
+        }
+
+        private boolean isCargoThresholdWait() {
+            return waitingStop
+                    .map(RouteStop::waitCondition)
+                    .map(wait -> wait.type() == WaitConditionType.UNTIL_ITEM_THRESHOLD
+                            || wait.type() == WaitConditionType.UNTIL_FLUID_THRESHOLD)
+                    .orElse(false);
+        }
+
         private int waitTicksRemaining() {
             return waitTicksRemaining;
+        }
+
+        private boolean dockLocked() {
+            return dockLocked;
+        }
+
+        private void dockLocked(boolean dockLocked) {
+            this.dockLocked = dockLocked;
+        }
+
+        private Optional<DockTransferSnapshot> dockTransferSnapshot() {
+            return dockTransferSnapshot;
+        }
+
+        private void dockTransferSnapshot(DockTransferSnapshot dockTransferSnapshot) {
+            this.dockTransferSnapshot = Optional.of(dockTransferSnapshot);
+        }
+
+        private void resetIdleWait() {
+            waitTicksRemaining = Math.max(1, idleWindowTicks);
         }
 
         private boolean tickWait() {
@@ -552,9 +897,36 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return waitTicksRemaining <= 0;
         }
 
+        private boolean tickDockTimeout() {
+            if (dockTimeoutTicksRemaining > 0) {
+                dockTimeoutTicksRemaining--;
+            }
+            return dockTimeoutTicksRemaining <= 0;
+        }
+
+        private boolean tickIdleTimeout() {
+            if (dockIdleTimeoutTicksRemaining > 0) {
+                dockIdleTimeoutTicksRemaining--;
+            }
+            return dockIdleTimeoutTicksRemaining <= 0;
+        }
+
+        private boolean tickCargoTimeout() {
+            if (dockCargoTimeoutTicksRemaining > 0) {
+                dockCargoTimeoutTicksRemaining--;
+            }
+            return dockCargoTimeoutTicksRemaining <= 0;
+        }
+
         private void clearWait() {
             waitingStop = Optional.empty();
             waitTicksRemaining = 0;
+            idleWindowTicks = 0;
+            dockTimeoutTicksRemaining = 0;
+            dockIdleTimeoutTicksRemaining = 0;
+            dockCargoTimeoutTicksRemaining = 0;
+            dockLocked = false;
+            dockTransferSnapshot = Optional.empty();
         }
 
         private Vec3 pointPosition(int pointIndex) {
@@ -595,7 +967,22 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             return Integer.MAX_VALUE;
         }
 
-        private Optional<RouteRotation> targetRotation(Vec3 currentPosition) {
+        private Optional<RouteRotation> targetRotation() {
+            return pointRotation(targetIndex);
+        }
+
+        private Vec3 guidancePosition() {
+            int previousIndex = targetIndex - direction;
+            if (previousIndex < 0 || previousIndex >= route.points().size()) {
+                return targetPosition();
+            }
+
+            Vec3 previousPosition = pointPosition(previousIndex);
+            Vec3 nextPosition = pointPosition(targetIndex);
+            return previousPosition.lerp(nextPosition, segmentProgress());
+        }
+
+        private Optional<RouteRotation> guidanceRotation() {
             int previousIndex = targetIndex - direction;
             Optional<RouteRotation> targetRotation = pointRotation(targetIndex);
             if (previousIndex < 0 || previousIndex >= route.points().size()) {
@@ -609,18 +996,7 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
             if (targetRotation.isEmpty()) {
                 return previousRotation;
             }
-
-            Vec3 segmentStart = pointPosition(previousIndex);
-            Vec3 segmentEnd = pointPosition(targetIndex);
-            Vec3 segment = segmentEnd.subtract(segmentStart);
-            double lengthSquared = segment.lengthSqr();
-            if (lengthSquared < 1.0E-6D) {
-                return targetRotation;
-            }
-
-            double progress = currentPosition.subtract(segmentStart).dot(segment) / lengthSquared;
-            progress = Math.max(0.0D, Math.min(1.0D, progress));
-            return Optional.of(previousRotation.get().slerp(targetRotation.get(), progress));
+            return Optional.of(previousRotation.get().slerp(targetRotation.get(), segmentProgress()));
         }
 
         private Optional<RouteRotation> pointRotation(int pointIndex) {
@@ -642,6 +1018,13 @@ public class RiddenEntityRoutePlaybackService implements RoutePlaybackService {
 
             double joinProgress = Math.min(1.0D, (double) ordinal / JOIN_BLEND_SEGMENTS);
             return Optional.of(joinStartRotation.get().slerp(routeRotation.get(), joinProgress));
+        }
+
+        private double segmentProgress() {
+            if (segmentDurationTicks <= 0L) {
+                return 1.0D;
+            }
+            return Math.max(0.0D, Math.min(1.0D, (double) segmentElapsedTicks / (double) segmentDurationTicks));
         }
 
         private boolean isRotationAligned(Optional<RouteRotation> targetRotation, VehicleController controller) {

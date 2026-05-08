@@ -6,6 +6,9 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
+import dev.simulated_team.simulated.content.blocks.docking_connector.DockingConnectorBlockEntity;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
@@ -28,9 +31,9 @@ import org.joml.Vector3d;
 import org.joml.Vector3dc;
 
 public class SableSubLevelVehicleController implements VehicleController {
-    private static final double ANGULAR_DAMPING = 1.0D;
-    private static final double ROTATION_ALIGNMENT_GAIN = 0.35D;
-    private static final double MAX_ALIGNMENT_ANGULAR_CHANGE = 0.2D;
+    private static final double ANGULAR_DAMPING = 0.9D;
+    private static final double ROTATION_ALIGNMENT_GAIN = 0.18D;
+    private static final double MAX_ALIGNMENT_ANGULAR_CHANGE = 0.06D;
     private static final double TICKS_PER_SECOND = 20.0D;
     private static final double MIN_AUTOPILOT_SPEED_BLOCKS_PER_SECOND = 1.2D;
     private static final int MOVEMENT_LOG_INTERVAL_TICKS = 20;
@@ -65,7 +68,7 @@ public class SableSubLevelVehicleController implements VehicleController {
         }
 
         Optional<SableSubLevelVehicleController> resolved = controllerRef.controllerPos()
-                .flatMap(controllerPos -> findSubLevelContainingSeat(level, controllerPos));
+                .flatMap(controllerPos -> findSubLevelContainingController(level, controllerPos, ModBlocks.SHIP_TRANSPONDER.get(), true));
         if (resolved.isEmpty()) {
             CreateAeronauticsAutomatedLogistics.LOGGER.warn("Could not resolve linked Sable controller from {}", controllerRef);
         }
@@ -78,6 +81,19 @@ public class SableSubLevelVehicleController implements VehicleController {
             Block expectedBlock
     ) {
         return findSubLevelContainingController(level, controllerPos, expectedBlock, false);
+    }
+
+    public List<BlockPos> dockingConnectorPositionsNearController(int radius) {
+        ServerLevel level = subLevel.getLevel();
+        return BlockPos.betweenClosedStream(
+                        localControllerPos.offset(-radius, -radius, -radius),
+                        localControllerPos.offset(radius, radius, radius)
+                )
+                .map(BlockPos::immutable)
+                .filter(pos -> isInsideStorageBounds(subLevel, pos))
+                .filter(pos -> level.getBlockEntity(pos) instanceof DockingConnectorBlockEntity)
+                .sorted(Comparator.comparingDouble(pos -> pos.distSqr(localControllerPos)))
+                .toList();
     }
 
     @Override
@@ -259,7 +275,12 @@ public class SableSubLevelVehicleController implements VehicleController {
                 desiredOrientation.mul(-1.0D);
             }
 
-            Quaterniond deltaQuaternion = new Quaterniond(currentOrientation).conjugate().mul(desiredOrientation).normalize();
+            Quaterniond deltaQuaternion = new Quaterniond(desiredOrientation)
+                    .mul(new Quaterniond(currentOrientation).conjugate())
+                    .normalize();
+            if (deltaQuaternion.w < 0.0D) {
+                deltaQuaternion.mul(-1.0D);
+            }
             AxisAngle4d axisAngle = new AxisAngle4d();
             deltaQuaternion.get(axisAngle);
             if (Double.isFinite(axisAngle.angle) && axisAngle.angle > 1.0E-4D) {
@@ -300,10 +321,6 @@ public class SableSubLevelVehicleController implements VehicleController {
         Vec3 localAnchor = subLevel.logicalPose().transformPositionInverse(player.position());
         BlockPos localPos = BlockPos.containing(localAnchor.x, localAnchor.y, localAnchor.z);
         return Optional.of(new SableSubLevelVehicleController(subLevel, localPos, localAnchor));
-    }
-
-    private static Optional<SableSubLevelVehicleController> findSubLevelContainingSeat(ServerLevel level, BlockPos controllerPos) {
-        return findSubLevelContainingController(level, controllerPos, ModBlocks.AUTOPILOT_SEAT.get(), true);
     }
 
     private static Optional<SableSubLevelVehicleController> findSubLevelContainingController(
@@ -444,38 +461,8 @@ public class SableSubLevelVehicleController implements VehicleController {
         return Optional.empty();
     }
 
-    private static BlockPos plotLocalPosFromStorage(ServerSubLevel subLevel, BlockPos storagePos) {
-        ChunkPos localChunk = subLevel.getPlot().toLocal(new ChunkPos(storagePos));
-        return new BlockPos(
-                localChunk.getMinBlockX() + (storagePos.getX() & 15),
-                storagePos.getY(),
-                localChunk.getMinBlockZ() + (storagePos.getZ() & 15)
-        );
-    }
-
-    private static BlockPos storagePosFromPlotLocal(ServerSubLevel subLevel, BlockPos localPos) {
-        ChunkPos globalChunk = subLevel.getPlot().toGlobal(new ChunkPos(localPos));
-        return new BlockPos(
-                globalChunk.getMinBlockX() + (localPos.getX() & 15),
-                localPos.getY(),
-                globalChunk.getMinBlockZ() + (localPos.getZ() & 15)
-        );
-    }
-
-    private static boolean isInsideLocalBounds(ServerSubLevel subLevel, BlockPos pos) {
-        return subLevel.getPlot().getBoundingBox().contains(pos.getX(), pos.getY(), pos.getZ());
-    }
-
     private static boolean isInsideStorageBounds(ServerSubLevel subLevel, BlockPos pos) {
         return subLevel.getPlot().getBoundingBox().contains(pos.getX(), pos.getY(), pos.getZ());
-    }
-
-    private static boolean hasSeatAtPlotLocal(ServerSubLevel subLevel, BlockPos pos) {
-        return hasControllerBlockAtStorage(subLevel, storagePosFromPlotLocal(subLevel, pos), ModBlocks.AUTOPILOT_SEAT.get());
-    }
-
-    private static boolean hasSeatAtStorage(ServerSubLevel subLevel, BlockPos pos) {
-        return hasControllerBlockAtStorage(subLevel, pos, ModBlocks.AUTOPILOT_SEAT.get());
     }
 
     private static boolean hasControllerBlockAtStorage(ServerSubLevel subLevel, BlockPos pos, Block expectedBlock) {

@@ -21,8 +21,33 @@ public final class RouteSegmentRegistry {
         }
     }
 
+    public static void replaceForStartStation(UUID stationId, List<RouteSegment> segments) {
+        SEGMENTS.values().removeIf(segment -> segment.startStationId().equals(stationId));
+        registerAll(segments);
+    }
+
+    public static void unregisterStartStation(UUID stationId) {
+        SEGMENTS.values().removeIf(segment -> segment.startStationId().equals(stationId));
+    }
+
     public static Optional<RouteSegment> byId(RouteSegmentId segmentId) {
         return Optional.ofNullable(SEGMENTS.get(segmentId));
+    }
+
+    public static List<RouteSegment> endingAt(
+            UUID endStationId,
+            ResourceKey<Level> dimension,
+            Optional<UUID> transponderId
+    ) {
+        return SEGMENTS.values().stream()
+                .filter(segment -> segment.dimension().equals(dimension))
+                .filter(segment -> segment.endStationId().equals(endStationId))
+                .filter(segment -> transponderId.map(id -> id.equals(segment.transponderId())).orElse(true))
+                .sorted(Comparator
+                        .comparingLong(RouteSegment::createdEpochMillis)
+                        .reversed()
+                        .thenComparing(segment -> segment.id().value().toString()))
+                .toList();
     }
 
     public static List<RouteSegment> matching(

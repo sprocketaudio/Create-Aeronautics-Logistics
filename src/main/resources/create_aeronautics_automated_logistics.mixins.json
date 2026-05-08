@@ -1,0 +1,15 @@
+{
+  "required": true,
+  "package": "net.sprocketgames.create_aeronautics_automated_logistics.mixin.client.aeronautics",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "BasePropellerBlockEntityMixin",
+    "HotAirBurnerBlockEntityMixin",
+    "PropellerBearingBlockEntityMixin",
+    "SmartPropellerBlockEntityMixin",
+    "SteamVentBlockEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

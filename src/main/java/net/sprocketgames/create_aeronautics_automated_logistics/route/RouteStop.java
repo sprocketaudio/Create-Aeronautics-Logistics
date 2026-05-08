@@ -29,6 +29,10 @@ public record RouteStop(
         return new RouteStop(UUID.randomUUID(), name, pointIndex, waitCondition, Optional.empty());
     }
 
+    public static RouteStop create(String name, int pointIndex, WaitCondition waitCondition, Optional<BlockPos> dockPos) {
+        return new RouteStop(UUID.randomUUID(), name, pointIndex, waitCondition, dockPos);
+    }
+
     public RouteStop withWaitCondition(WaitCondition waitCondition) {
         return new RouteStop(id, name, pointIndex, waitCondition, dockPos);
     }

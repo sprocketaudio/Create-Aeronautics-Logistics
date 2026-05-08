@@ -1,0 +1,16 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "category": "misc",
+  "ingredients": [
+    {
+      "item": "simulated:navigation_table"
+    },
+    {
+      "item": "simulated:physics_assembler"
+    }
+  ],
+  "result": {
+    "count": 1,
+    "id": "create_aeronautics_automated_logistics:ship_transponder"
+  }
+}

@@ -29,5 +29,20 @@ public final class ModNetworking {
                 SelectAirshipScheduleStationPayload.STREAM_CODEC,
                 SelectAirshipScheduleStationPayload::handle
         );
+        registrar.playToClient(
+                SetFlightPathPreviewPayload.TYPE,
+                SetFlightPathPreviewPayload.STREAM_CODEC,
+                SetFlightPathPreviewPayload::handle
+        );
+        registrar.playToClient(
+                SetAutomatedShipVisualStatePayload.TYPE,
+                SetAutomatedShipVisualStatePayload.STREAM_CODEC,
+                SetAutomatedShipVisualStatePayload::handle
+        );
+        registrar.playToClient(
+                SyncAutomatedShipVisualsPayload.TYPE,
+                SyncAutomatedShipVisualsPayload.STREAM_CODEC,
+                SyncAutomatedShipVisualsPayload::handle
+        );
     }
 }

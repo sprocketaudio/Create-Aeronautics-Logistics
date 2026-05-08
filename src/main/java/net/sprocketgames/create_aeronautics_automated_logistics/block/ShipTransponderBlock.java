@@ -9,6 +9,7 @@ import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BaseEntityBlock;
 import net.minecraft.world.level.block.EntityBlock;
 import net.minecraft.world.level.block.RenderShape;
@@ -17,21 +18,33 @@ import net.minecraft.world.level.block.entity.BlockEntityTicker;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.StateDefinition;
+import net.minecraft.world.level.block.state.properties.BlockStateProperties;
+import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.Containers;
 import net.sprocketgames.create_aeronautics_automated_logistics.block.entity.ShipTransponderBlockEntity;
 import net.sprocketgames.create_aeronautics_automated_logistics.registry.ModBlockEntities;
 import org.jetbrains.annotations.NotNull;
 
 public class ShipTransponderBlock extends BaseEntityBlock implements EntityBlock {
     public static final MapCodec<ShipTransponderBlock> CODEC = simpleCodec(ShipTransponderBlock::new);
+    public static final BooleanProperty POWERED = BlockStateProperties.POWERED;
 
     public ShipTransponderBlock(BlockBehaviour.Properties properties) {
         super(properties);
+        registerDefaultState(defaultBlockState().setValue(POWERED, false));
     }
 
     @Override
     protected MapCodec<? extends BaseEntityBlock> codec() {
         return CODEC;
+    }
+
+    @Override
+    protected void createBlockStateDefinition(StateDefinition.Builder<Block, BlockState> builder) {
+        super.createBlockStateDefinition(builder);
+        builder.add(POWERED);
     }
 
     @Override
@@ -83,5 +96,40 @@ public class ShipTransponderBlock extends BaseEntityBlock implements EntityBlock
     @Override
     protected RenderShape getRenderShape(@NotNull BlockState state) {
         return RenderShape.MODEL;
+    }
+
+    @Override
+    protected boolean isSignalSource(BlockState state) {
+        return true;
+    }
+
+    @Override
+    protected int getSignal(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos pos, net.minecraft.core.Direction direction) {
+        if (level.getBlockEntity(pos) instanceof ShipTransponderBlockEntity transponder && transponder.dockOutputActive()) {
+            return 15;
+        }
+        return 0;
+    }
+
+    @Override
+    protected int getDirectSignal(BlockState state, net.minecraft.world.level.BlockGetter level, BlockPos pos, net.minecraft.core.Direction direction) {
+        return getSignal(state, level, pos, direction);
+    }
+
+    @Override
+    protected void onRemove(BlockState state, Level level, BlockPos pos, BlockState newState, boolean isMoving) {
+        if (!state.is(newState.getBlock())
+                && level.getBlockEntity(pos) instanceof ShipTransponderBlockEntity transponder
+                && !transponder.installedScheduleStack().isEmpty()) {
+            Containers.dropItemStack(
+                    level,
+                    pos.getX() + 0.5D,
+                    pos.getY() + 0.5D,
+                    pos.getZ() + 0.5D,
+                    transponder.installedScheduleStack().copy()
+            );
+            transponder.clearContent();
+        }
+        super.onRemove(state, level, pos, newState, isMoving);
     }
 }

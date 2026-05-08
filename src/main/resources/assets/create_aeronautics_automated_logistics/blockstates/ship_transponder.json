@@ -1,7 +1,10 @@
 {
   "variants": {
-    "": {
-      "model": "create_aeronautics_automated_logistics:block/ship_transponder"
+    "powered=false": {
+      "model": "create_aeronautics_automated_logistics:block/ship_transponder_off"
+    },
+    "powered=true": {
+      "model": "create_aeronautics_automated_logistics:block/ship_transponder_on"
     }
   }
 }

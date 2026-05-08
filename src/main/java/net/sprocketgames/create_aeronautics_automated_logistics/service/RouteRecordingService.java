@@ -8,6 +8,8 @@ import net.sprocketgames.create_aeronautics_automated_logistics.route.RouteSegme
 import net.sprocketgames.create_aeronautics_automated_logistics.route.RouteStop;
 import net.sprocketgames.create_aeronautics_automated_logistics.route.WaitCondition;
 import net.sprocketgames.create_aeronautics_automated_logistics.vehicle.VehicleController;
+import java.util.Optional;
+import java.util.UUID;
 
 public interface RouteRecordingService {
     RouteOperationResult<RecordingSession> startRecording(ServerPlayer player, BlockPos stationPos, VehicleController controller);
@@ -27,6 +29,10 @@ public interface RouteRecordingService {
     RouteOperationResult<RouteStop> cycleLastStopWait(ServerPlayer player);
 
     RouteOperationResult<RouteStop> lastStop(ServerPlayer player);
+
+    boolean hasActiveRecording(ServerPlayer player);
+
+    Optional<RecordingSession> activeRecordingForPlayer(UUID playerId);
 
     void tickRecording(ServerPlayer player, RouteId routeId);
 }
