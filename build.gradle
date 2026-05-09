@@ -70,7 +70,7 @@ tasks.register('extractLocalModJarJars', Copy) {
 }
 
 base {
-    archivesName = "create_aeronautics_logistics"
+    archivesName = "create_aeronautics_automated_logistics"
 }
 
 // Mojang ships Java 21 to end users in 1.21.1, so mods should target Java 21.

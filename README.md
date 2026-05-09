@@ -1,4 +1,4 @@
-# Create Aeronautics: Logistics
+# Create Aeronautics: Automated Logistics
 
 This mod is in a very early development state.
 
