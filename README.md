@@ -74,11 +74,8 @@ Docking Connectors require redstone to activate. For docking-enabled stops:
 
 This lets automation trigger docking lock/unlock timing without manual switching.
 
-### 8. Monitor and Iterate
 
-Watch status and failure feedback, stop if needed, and re-record any segments when station layout or route geometry changes.
-
-## Design Goal
+## Goal
 
 This mod aims to feel like a rail-free logistics layer for Create Aeronautics.
 
